@@ -1,0 +1,38 @@
+# Quetie_mbg - Production Twitch Queue Management Bot
+# Core Dependencies
+
+# Web Framework
+fastapi==0.104.1
+uvicorn[standard]==0.24.0
+pydantic==2.5.0
+
+# Database
+sqlalchemy==2.0.23
+alembic==1.12.1
+
+# Authentication & Security
+pyjwt==2.8.1
+bcrypt==4.1.1
+python-dotenv==1.0.0
+
+# IRC & Networking
+socket  # Built-in, no pip needed
+
+# Development & Testing
+pytest==7.4.3
+pytest-asyncio==0.21.1
+pytest-cov==4.1.0
+
+# Utilities & Logging
+python-multipart==0.0.6
+requests==2.31.0
+
+# Optional: Production Server
+gunicorn==21.2.0
+
+# Optional: PostgreSQL Support
+psycopg2-binary==2.9.9
+
+# Type Checking
+mypy==1.7.1
+types-requests==2.31.0.10

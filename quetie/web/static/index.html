@@ -1,0 +1,815 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Quetie_mbg - Twitch Queue Management</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        :root {
+            /* Colors */
+            --primary: #9f7aea;
+            --primary-dark: #805ad5;
+            --primary-light: #d6bcfa;
+            --bg-light: #ffffff;
+            --bg-light-secondary: #f7fafc;
+            --text-light: #1a202c;
+            --text-light-secondary: #4a5568;
+            --bg-dark: #1a202c;
+            --bg-dark-secondary: #2d3748;
+            --text-dark: #f7fafc;
+            --text-dark-secondary: #cbd5e0;
+            --success: #48bb78;
+            --error: #f56565;
+            --warning: #ecc94b;
+            --border-light: #e2e8f0;
+            --border-dark: #4a5568;
+        }
+
+        /* Dark mode detection */
+        @media (prefers-color-scheme: dark) {
+            :root {
+                --bg: var(--bg-dark);
+                --bg-secondary: var(--bg-dark-secondary);
+                --text: var(--text-dark);
+                --text-secondary: var(--text-dark-secondary);
+                --border: var(--border-dark);
+            }
+        }
+
+        @media (prefers-color-scheme: light) {
+            :root {
+                --bg: var(--bg-light);
+                --bg-secondary: var(--bg-light-secondary);
+                --text: var(--text-light);
+                --text-secondary: var(--text-light-secondary);
+                --border: var(--border-light);
+            }
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            transition: background 0.3s ease, color 0.3s ease;
+            min-height: 100vh;
+        }
+
+        /* Layout */
+        .container {
+            display: grid;
+            grid-template-columns: 250px 1fr;
+            min-height: 100vh;
+        }
+
+        /* Sidebar */
+        .sidebar {
+            background: var(--bg-secondary);
+            border-right: 1px solid var(--border);
+            padding: 2rem 1rem;
+            position: fixed;
+            height: 100vh;
+            width: 250px;
+            overflow-y: auto;
+            backdrop-filter: blur(10px);
+            background: rgba(255, 255, 255, 0.05);
+        }
+
+        .sidebar h1 {
+            font-size: 1.5rem;
+            margin-bottom: 2rem;
+            background: linear-gradient(135deg, var(--primary), var(--primary-light));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+
+        .nav {
+            display: flex;
+            flex-direction: column;
+            gap: 1rem;
+        }
+
+        .nav-item {
+            padding: 0.75rem 1rem;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            color: var(--text-secondary);
+            text-decoration: none;
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+        }
+
+        .nav-item:hover,
+        .nav-item.active {
+            background: var(--primary);
+            color: white;
+        }
+
+        /* Main Content */
+        .main {
+            margin-left: 250px;
+            padding: 2rem;
+        }
+
+        header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 2rem;
+        }
+
+        h1 {
+            font-size: 2rem;
+            margin-bottom: 0.5rem;
+        }
+
+        .header-controls {
+            display: flex;
+            gap: 1rem;
+            align-items: center;
+        }
+
+        .btn {
+            padding: 0.75rem 1.5rem;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            font-weight: 600;
+            transition: all 0.2s ease;
+            font-size: 0.95rem;
+        }
+
+        .btn-primary {
+            background: var(--primary);
+            color: white;
+        }
+
+        .btn-primary:hover {
+            background: var(--primary-dark);
+            transform: translateY(-2px);
+            box-shadow: 0 8px 24px rgba(159, 122, 234, 0.3);
+        }
+
+        .btn-secondary {
+            background: var(--bg-secondary);
+            color: var(--text);
+            border: 1px solid var(--border);
+        }
+
+        .btn-secondary:hover {
+            border-color: var(--primary);
+            color: var(--primary);
+        }
+
+        /* Dashboard Grid */
+        .dashboard {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 1.5rem;
+        }
+
+        .card {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 1.5rem;
+            transition: all 0.3s ease;
+            backdrop-filter: blur(10px);
+            background: rgba(255, 255, 255, 0.05);
+        }
+
+        .card:hover {
+            border-color: var(--primary);
+            box-shadow: 0 8px 32px rgba(159, 122, 234, 0.1);
+            transform: translateY(-4px);
+        }
+
+        .card h2 {
+            font-size: 1.25rem;
+            margin-bottom: 1rem;
+            color: var(--text);
+        }
+
+        .stat-value {
+            font-size: 2rem;
+            font-weight: 700;
+            color: var(--primary);
+            margin: 1rem 0;
+        }
+
+        /* Queue List */
+        .queue-list {
+            display: flex;
+            flex-direction: column;
+            gap: 1rem;
+        }
+
+        .queue-item {
+            background: var(--bg);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 1rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            transition: all 0.2s ease;
+        }
+
+        .queue-item:hover {
+            border-color: var(--primary);
+            background: var(--bg-secondary);
+        }
+
+        .queue-item-info {
+            flex: 1;
+        }
+
+        .queue-item-url {
+            font-weight: 600;
+            color: var(--primary);
+            word-break: break-all;
+            font-size: 0.9rem;
+        }
+
+        .queue-item-submitter {
+            color: var(--text-secondary);
+            font-size: 0.85rem;
+            margin-top: 0.5rem;
+        }
+
+        .queue-item-actions {
+            display: flex;
+            gap: 0.5rem;
+            margin-left: 1rem;
+        }
+
+        .btn-small {
+            padding: 0.5rem 1rem;
+            font-size: 0.85rem;
+            border-radius: 6px;
+            border: none;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+
+        .btn-play {
+            background: var(--success);
+            color: white;
+        }
+
+        .btn-delete {
+            background: var(--error);
+            color: white;
+        }
+
+        /* Modal/Login */
+        .login-container {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            background: linear-gradient(135deg, var(--primary), var(--primary-dark));
+            background-attachment: fixed;
+        }
+
+        .login-form {
+            background: var(--bg);
+            padding: 2rem;
+            border-radius: 12px;
+            width: 100%;
+            max-width: 400px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+        }
+
+        .login-form h1 {
+            text-align: center;
+            margin-bottom: 2rem;
+            background: linear-gradient(135deg, var(--primary), var(--primary-light));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+
+        .form-group {
+            margin-bottom: 1.5rem;
+        }
+
+        label {
+            display: block;
+            margin-bottom: 0.5rem;
+            font-weight: 600;
+        }
+
+        input[type="text"],
+        input[type="password"] {
+            width: 100%;
+            padding: 0.75rem;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            background: var(--bg);
+            color: var(--text);
+            font-size: 1rem;
+            transition: border-color 0.2s ease;
+        }
+
+        input[type="text"]:focus,
+        input[type="password"]:focus {
+            outline: none;
+            border-color: var(--primary);
+            box-shadow: 0 0 0 3px rgba(159, 122, 234, 0.1);
+        }
+
+        .login-form .btn-primary {
+            width: 100%;
+            padding: 1rem;
+            font-size: 1rem;
+        }
+
+        /* Responsive */
+        @media (max-width: 768px) {
+            .container {
+                grid-template-columns: 1fr;
+            }
+
+            .sidebar {
+                position: static;
+                width: 100%;
+                height: auto;
+                padding: 1rem;
+                border-right: none;
+                border-bottom: 1px solid var(--border);
+            }
+
+            .sidebar h1 {
+                margin-bottom: 1rem;
+            }
+
+            .nav {
+                flex-direction: row;
+                flex-wrap: wrap;
+            }
+
+            .main {
+                margin-left: 0;
+                padding: 1rem;
+            }
+
+            header {
+                flex-direction: column;
+                align-items: flex-start;
+                gap: 1rem;
+            }
+
+            .dashboard {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        /* Loading */
+        .loading {
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border: 3px solid var(--primary-light);
+            border-radius: 50%;
+            border-top-color: var(--primary);
+            animation: spin 0.6s linear infinite;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        /* Utilities */
+        .hidden {
+            display: none !important;
+        }
+
+        .success-message {
+            background: rgba(72, 187, 120, 0.1);
+            color: var(--success);
+            padding: 1rem;
+            border-radius: 8px;
+            margin-bottom: 1rem;
+            border-left: 4px solid var(--success);
+        }
+
+        .error-message {
+            background: rgba(245, 101, 101, 0.1);
+            color: var(--error);
+            padding: 1rem;
+            border-radius: 8px;
+            margin-bottom: 1rem;
+            border-left: 4px solid var(--error);
+        }
+
+        .badge {
+            display: inline-block;
+            padding: 0.25rem 0.75rem;
+            border-radius: 999px;
+            font-size: 0.85rem;
+            font-weight: 600;
+        }
+
+        .badge-primary {
+            background: var(--primary);
+            color: white;
+        }
+
+        .badge-success {
+            background: var(--success);
+            color: white;
+        }
+
+        .badge-pending {
+            background: var(--warning);
+            color: white;
+        }
+    </style>
+</head>
+<body>
+    <div id="login" class="login-container hidden">
+        <form class="login-form" id="loginForm">
+            <h1>🎬 Quetie_mbg</h1>
+            <div class="form-group">
+                <label for="username">Username</label>
+                <input type="text" id="username" name="username" required>
+            </div>
+            <div class="form-group">
+                <label for="password">Password</label>
+                <input type="password" id="password" name="password" required>
+            </div>
+            <button type="submit" class="btn btn-primary">Login</button>
+            <div id="loginError" class="error-message hidden"></div>
+        </form>
+    </div>
+
+    <div id="app" class="hidden">
+        <div class="container">
+            <aside class="sidebar">
+                <h1>🎬 Quetie</h1>
+                <nav class="nav">
+                    <a href="#" class="nav-item active" data-page="dashboard">
+                        📊 Dashboard
+                    </a>
+                    <a href="#" class="nav-item" data-page="queue">
+                        📋 Queue
+                    </a>
+                    <a href="#" class="nav-item" data-page="filters">
+                        🚫 Filters
+                    </a>
+                    <a href="#" class="nav-item" data-page="settings">
+                        ⚙️ Settings
+                    </a>
+                    <hr style="margin: 1rem 0; border: none; border-top: 1px solid var(--border);">
+                    <a href="#" class="nav-item" id="logoutBtn">
+                        🚪 Logout
+                    </a>
+                </nav>
+            </aside>
+
+            <main class="main">
+                <header>
+                    <div>
+                        <h1 id="pageTitle">Dashboard</h1>
+                        <p id="pageSubtitle"></p>
+                    </div>
+                    <div class="header-controls">
+                        <span id="adminName"></span>
+                        <button class="btn btn-secondary" id="refreshBtn">🔄 Refresh</button>
+                    </div>
+                </header>
+
+                <!-- Dashboard Page -->
+                <div id="dashboardPage" class="page">
+                    <div class="dashboard">
+                        <div class="card">
+                            <h2>📊 Queue Size</h2>
+                            <div class="stat-value" id="queueSize">-</div>
+                            <p style="color: var(--text-secondary);">Total pending links</p>
+                        </div>
+                        <div class="card">
+                            <h2>✅ Accepted</h2>
+                            <div class="stat-value" id="acceptedCount">-</div>
+                            <p style="color: var(--text-secondary);">Links accepted today</p>
+                        </div>
+                        <div class="card">
+                            <h2>❌ Rejected</h2>
+                            <div class="stat-value" id="rejectedCount">-</div>
+                            <p style="color: var(--text-secondary);">Links rejected today</p>
+                        </div>
+                        <div class="card">
+                            <h2>▶️ Played</h2>
+                            <div class="stat-value" id="playedCount">-</div>
+                            <p style="color: var(--text-secondary);">Links played</p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Queue Page -->
+                <div id="queuePage" class="page hidden">
+                    <div class="card">
+                        <h2>Queue Management</h2>
+                        <div class="queue-list" id="queueList">
+                            <p>Loading queue...</p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Filters Page -->
+                <div id="filtersPage" class="page hidden">
+                    <div class="card">
+                        <h2>Link Filters</h2>
+                        <p>Blocked domains and keywords management</p>
+                        <p style="color: var(--text-secondary); margin-top: 1rem;">
+                            Coming soon - Configure blocked domains and keywords from here
+                        </p>
+                    </div>
+                </div>
+
+                <!-- Settings Page -->
+                <div id="settingsPage" class="page hidden">
+                    <div class="card">
+                        <h2>Settings</h2>
+                        <p>Application settings and configuration</p>
+                        <p style="color: var(--text-secondary); margin-top: 1rem;">
+                            Coming soon - Update bot settings, notification preferences, and more
+                        </p>
+                    </div>
+                </div>
+            </main>
+        </div>
+    </div>
+
+    <script>
+        // Simple API client
+        class APIClient {
+            constructor() {
+                this.baseURL = window.location.origin;
+                this.token = localStorage.getItem('token');
+            }
+
+            setToken(token) {
+                this.token = token;
+                localStorage.setItem('token', token);
+            }
+
+            clearToken() {
+                this.token = null;
+                localStorage.removeItem('token');
+            }
+
+            async request(path, options = {}) {
+                const headers = {
+                    'Content-Type': 'application/json',
+                    ...options.headers
+                };
+
+                if (this.token) {
+                    headers['Authorization'] = `Bearer ${this.token}`;
+                }
+
+                try {
+                    const response = await fetch(`${this.baseURL}${path}`, {
+                        ...options,
+                        headers
+                    });
+
+                    if (response.status === 401) {
+                        api.clearToken();
+                        app.showLogin();
+                        throw new Error('Unauthorized');
+                    }
+
+                    const data = await response.json();
+
+                    if (!response.ok) {
+                        throw new Error(data.detail || 'Request failed');
+                    }
+
+                    return data;
+                } catch (error) {
+                    console.error('API Error:', error);
+                    throw error;
+                }
+            }
+
+            // Auth
+            login(username, password) {
+                return this.request('/api/auth/login', {
+                    method: 'POST',
+                    body: JSON.stringify({ username, password })
+                });
+            }
+
+            getMe() {
+                return this.request('/api/auth/me');
+            }
+
+            // Queue
+            getQueue(skip = 0, limit = 50) {
+                return this.request(`/api/queue?skip=${skip}&limit=${limit}`);
+            }
+
+            getStats() {
+                return this.request('/api/queue/stats');
+            }
+
+            markPlaying(entryId) {
+                return this.request(`/api/queue/${entryId}/play`, {
+                    method: 'POST'
+                });
+            }
+
+            removeEntry(entryId) {
+                return this.request(`/api/queue/${entryId}`, {
+                    method: 'DELETE'
+                });
+            }
+        }
+
+        const api = new APIClient();
+
+        class App {
+            constructor() {
+                this.currentUser = null;
+                this.init();
+            }
+
+            init() {
+                this.setupEventListeners();
+                this.checkAuth();
+            }
+
+            setupEventListeners() {
+                document.getElementById('loginForm').addEventListener('submit', (e) => this.handleLogin(e));
+                document.getElementById('logoutBtn').addEventListener('click', () => this.logout());
+                document.getElementById('refreshBtn').addEventListener('click', () => this.loadDashboard());
+
+                document.querySelectorAll('[data-page]').forEach(link => {
+                    link.addEventListener('click', (e) => {
+                        e.preventDefault();
+                        const page = e.currentTarget.dataset.page;
+                        this.showPage(page);
+                    });
+                });
+            }
+
+            checkAuth() {
+                if (api.token) {
+                    this.loadApp();
+                } else {
+                    this.showLogin();
+                }
+            }
+
+            showLogin() {
+                document.getElementById('app').classList.add('hidden');
+                document.getElementById('login').classList.remove('hidden');
+            }
+
+            async handleLogin(e) {
+                e.preventDefault();
+                const username = document.getElementById('username').value;
+                const password = document.getElementById('password').value;
+                const errorEl = document.getElementById('loginError');
+
+                try {
+                    const response = await api.login(username, password);
+                    api.setToken(response.token);
+                    this.loadApp();
+                } catch (error) {
+                    errorEl.textContent = error.message;
+                    errorEl.classList.remove('hidden');
+                }
+            }
+
+            async loadApp() {
+                try {
+                    const user = await api.getMe();
+                    this.currentUser = user;
+                    document.getElementById('adminName').textContent = `👤 ${user.username}`;
+                    document.getElementById('login').classList.add('hidden');
+                    document.getElementById('app').classList.remove('hidden');
+                    this.loadDashboard();
+                } catch (error) {
+                    this.showLogin();
+                }
+            }
+
+            async loadDashboard() {
+                try {
+                    const stats = await api.getStats();
+                    document.getElementById('queueSize').textContent = stats.total_links_submitted - stats.total_links_played;
+                    document.getElementById('acceptedCount').textContent = stats.total_links_accepted;
+                    document.getElementById('rejectedCount').textContent = stats.total_links_rejected;
+                    document.getElementById('playedCount').textContent = stats.total_links_played;
+                } catch (error) {
+                    console.error('Failed to load dashboard:', error);
+                }
+            }
+
+            async loadQueue() {
+                try {
+                    const response = await api.getQueue();
+                    const queueList = document.getElementById('queueList');
+
+                    if (response.entries.length === 0) {
+                        queueList.innerHTML = '<p>Queue is empty!</p>';
+                        return;
+                    }
+
+                    queueList.innerHTML = response.entries.map(entry => `
+                        <div class="queue-item">
+                            <div class="queue-item-info">
+                                <div class="queue-item-url">${entry.url}</div>
+                                <div class="queue-item-submitter">
+                                    From: @${entry.submitter_username}
+                                    <span class="badge badge-${entry.status}">${entry.status}</span>
+                                </div>
+                            </div>
+                            <div class="queue-item-actions">
+                                <button class="btn-small btn-play" onclick="app.playEntry(${entry.id})">▶️ Play</button>
+                                <button class="btn-small btn-delete" onclick="app.deleteEntry(${entry.id})">✕ Remove</button>
+                            </div>
+                        </div>
+                    `).join('');
+                } catch (error) {
+                    console.error('Failed to load queue:', error);
+                }
+            }
+
+            async playEntry(id) {
+                try {
+                    await api.markPlaying(id);
+                    this.loadQueue();
+                    this.loadDashboard();
+                } catch (error) {
+                    alert('Failed to play entry');
+                }
+            }
+
+            async deleteEntry(id) {
+                if (confirm('Remove this entry from queue?')) {
+                    try {
+                        await api.removeEntry(id);
+                        this.loadQueue();
+                        this.loadDashboard();
+                    } catch (error) {
+                        alert('Failed to remove entry');
+                    }
+                }
+            }
+
+            showPage(page) {
+                // Hide all pages
+                document.querySelectorAll('.page').forEach(p => p.classList.add('hidden'));
+
+                // Update nav
+                document.querySelectorAll('[data-page]').forEach(link => {
+                    link.classList.remove('active');
+                    if (link.dataset.page === page) {
+                        link.classList.add('active');
+                    }
+                });
+
+                // Show page
+                document.getElementById(`${page}Page`).classList.remove('hidden');
+
+                // Update header
+                const titles = {
+                    dashboard: 'Dashboard',
+                    queue: 'Queue Management',
+                    filters: 'Link Filters',
+                    settings: 'Settings'
+                };
+                document.getElementById('pageTitle').textContent = titles[page];
+
+                // Load data
+                if (page === 'queue') {
+                    this.loadQueue();
+                }
+            }
+
+            logout() {
+                api.clearToken();
+                this.currentUser = null;
+                this.showLogin();
+                document.getElementById('username').value = '';
+                document.getElementById('password').value = '';
+            }
+        }
+
+        // Initialize app
+        const app = new App();
+    </script>
+</body>
+</html>
