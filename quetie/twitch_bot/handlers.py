@@ -3,6 +3,11 @@ Command handlers for Twitch bot
 Processes user commands and routes them to appropriate handlers
 """
 
+import re
+import urllib.parse
+import urllib.request
+from typing import Optional
+
 from quetie.queue.manager import queue_manager
 from quetie.utils.logger import setup_logger
 
@@ -11,6 +16,13 @@ logger = setup_logger(__name__)
 
 class CommandHandlers:
     """Handlers for Twitch chat commands"""
+
+    URL_PATTERN = re.compile(r'https?://[^\s<>"\']+', re.IGNORECASE)
+    VIDEO_ID_PATTERNS = [
+        re.compile(r'"videoId":"([A-Za-z0-9_-]{11})"'),
+        re.compile(r'href="/watch\?v=([A-Za-z0-9_-]{11})"'),
+        re.compile(r'watch\?v=([A-Za-z0-9_-]{11})'),
+    ]
     
     def __init__(self, irc_client):
         """
@@ -31,6 +43,68 @@ class CommandHandlers:
         self.irc_client.register_handler("!queuehelp", self.handle_help)
         self.irc_client.register_handler("!queuesize", self.handle_queuesize)
         logger.info("Command handlers registered")
+
+    def _resolve_youtube_query(self, query: str) -> Optional[str]:
+        """Resolve a free-text query to a likely YouTube video URL."""
+        normalized = (query or "").strip()
+        if not normalized:
+            return None
+
+        search_url = "https://www.youtube.com/results?search_query=" + urllib.parse.quote_plus(normalized)
+        request = urllib.request.Request(
+            search_url,
+            headers={
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+            },
+        )
+
+        try:
+            with urllib.request.urlopen(request, timeout=6) as response:
+                body = response.read().decode("utf-8", errors="ignore")
+        except Exception as e:
+            logger.warning(f"Failed to resolve YouTube query '{normalized}': {e}")
+            body = ""
+
+        youtube_url = self._extract_youtube_url(body)
+        if youtube_url:
+            return youtube_url
+
+        return self._resolve_youtube_query_via_duckduckgo(normalized)
+
+    def _resolve_youtube_query_via_duckduckgo(self, query: str) -> Optional[str]:
+        """Fallback to DuckDuckGo HTML search and extract the first YouTube result."""
+        search_url = "https://duckduckgo.com/html/?q=" + urllib.parse.quote_plus(f"site:youtube.com {query}")
+        request = urllib.request.Request(
+            search_url,
+            headers={
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+            },
+        )
+
+        try:
+            with urllib.request.urlopen(request, timeout=6) as response:
+                body = response.read().decode("utf-8", errors="ignore")
+        except Exception as e:
+            logger.warning(f"DuckDuckGo fallback failed for '{query}': {e}")
+            return None
+
+        for match in re.finditer(r'uddg=([^&"\']+)', body):
+            candidate = urllib.parse.unquote(match.group(1))
+            candidate = candidate.rstrip(".,)\"'")
+            if "youtube.com/watch" in candidate or "youtu.be/" in candidate:
+                return candidate
+
+        return None
+
+    def _extract_youtube_url(self, body: str) -> Optional[str]:
+        """Extract the first likely video URL from a YouTube results page."""
+        for pattern in self.VIDEO_ID_PATTERNS:
+            match = pattern.search(body or "")
+            if match:
+                video_id = match.group(1)
+                return f"https://www.youtube.com/watch?v={video_id}"
+
+        return None
     
     def handle_queue(self, username: str, args: str) -> None:
         """
@@ -60,8 +134,8 @@ class CommandHandlers:
     
     def handle_add(self, username: str, args: str) -> None:
         """
-        Handle !add command - add link to queue
-        Format: !add <url> [notes]
+        Handle !add command - add one or more links to queue
+        Format: !add <url> [url2 ...] [notes]
         
         Args:
             username: User who issued command
@@ -73,25 +147,105 @@ class CommandHandlers:
                 f"Type !queuehelp for more info."
             )
             return
-        
-        # Extract URL (first "word" which could be the entire first argument if it's a URL)
-        parts = args.split(" ", 1)
-        url = parts[0].strip()
-        notes = parts[1].strip() if len(parts) > 1 else None
-        
-        # Add to queue
-        success, message, entry_id = queue_manager.add_to_queue(
-            url=url,
-            submitter_username=username,
-            notes=notes
+
+        urls = self.URL_PATTERN.findall(args)
+        if not urls:
+            # Support multiple free-text song/video queries separated by commas or newlines
+            parts = [p.strip() for p in re.split(r'[,\r\n]+', args) if p.strip()]
+            if not parts:
+                self.irc_client.send_message(
+                    f"@{username} No valid URLs found. Use !add <url> or provide a song/video name to search YouTube."
+                )
+                return
+
+            results = []
+            for part in parts:
+                resolved = self._resolve_youtube_query(part)
+                if not resolved:
+                    results.append((part, None, False, f"No match for: {part}", None))
+                    continue
+                success, message, entry_id = queue_manager.add_to_queue(
+                    url=resolved,
+                    submitter_username=username,
+                    notes=f"Query: {part}"
+                )
+                results.append((part, resolved, success, message, entry_id))
+
+            added = sum(1 for _, _, success, _, _ in results if success)
+            failed = len(results) - added
+            if failed == 0:
+                # If there was only one free-text query, mirror the single-URL reply format
+                if len(results) == 1:
+                    part, resolved_url, success, message, _ = results[0]
+                    self.irc_client.send_message(f"@{username} {message} (matched: {resolved_url})")
+                    return
+
+                positions = []
+                for part, _, success, message, _ in results:
+                    m = re.search(r"position\s+(\d+)", message, re.IGNORECASE)
+                    positions.append(m.group(1) if m else "?")
+                self.irc_client.send_message(f"@{username} Added {added} items to queue (positions: {', '.join(positions)})")
+            else:
+                first_fail = next((m for p, r, s, m, _ in results if not s), "Some items failed" )
+                self.irc_client.send_message(f"@{username} Added {added}/{len(results)} items; first failure: {first_fail}")
+            return
+
+        if len(urls) == 1:
+            notes = None
+            remaining = args.replace(urls[0], "", 1).strip()
+            if remaining:
+                notes = remaining
+
+            success, message, entry_id = queue_manager.add_to_queue(
+                url=urls[0],
+                submitter_username=username,
+                notes=notes
+            )
+
+            if success:
+                logger.info(f"Queue entry added: {entry_id} from {username}")
+            else:
+                logger.warning(f"Queue rejection: {message} from {username}")
+
+            self.irc_client.send_message(f"@{username} {message}")
+            return
+
+        results = []
+        for url in urls:
+            success, message, entry_id = queue_manager.add_to_queue(
+                url=url,
+                submitter_username=username,
+            )
+            results.append((url, success, message, entry_id))
+
+        added = sum(1 for _, success, _, _ in results if success)
+        failed = len(results) - added
+        logger.info(f"Processed {len(results)} queued links from {username}: {added} added, {failed} failed")
+
+        added_positions = []
+        for index, (_, success, message, _) in enumerate(results, start=1):
+            if not success:
+                continue
+            position_match = re.search(r"position\s+(\d+)", message, re.IGNORECASE)
+            if position_match:
+                added_positions.append(position_match.group(1))
+            else:
+                added_positions.append(str(index))
+
+        failed_messages = [message for _, success, message, _ in results if not success]
+
+        if failed == 0:
+            positions_preview = ", ".join(added_positions[:10])
+            suffix = "" if len(added_positions) <= 10 else ", ..."
+            self.irc_client.send_message(
+                f"@{username} Added {added} links to queue (positions: {positions_preview}{suffix})"
+            )
+            return
+
+        failure_hint = failed_messages[0] if failed_messages else "Some links could not be queued"
+        self.irc_client.send_message(
+            f"@{username} Added {added}/{len(results)} links (positions: {', '.join(added_positions[:10])}); first failure: {failure_hint}"
         )
-        
-        if success:
-            logger.info(f"Queue entry added: {entry_id} from {username}")
-            self.irc_client.send_message(f"@{username} {message}")
-        else:
-            logger.warning(f"Queue rejection: {message} from {username}")
-            self.irc_client.send_message(f"@{username} {message}")
     
     def handle_help(self, username: str, args: str) -> None:
         """
@@ -103,7 +257,8 @@ class CommandHandlers:
         """
         help_messages = [
             "Queue Commands:",
-            "!add <url> - Submit a link to the queue",
+            "!add <url> [url2 ...] - Submit one or more links to the queue",
+            "!add <song or video name> - Auto-search YouTube and queue the top result",
             "!queue - Show next link in queue",
             "!queuesize - Show current queue size",
             "Only valid links are accepted. Discord/social links rejected.",
