@@ -25,23 +25,23 @@
         }
 
         :root {
-            --primary: #9f7aea;
-            --primary-dark: #805ad5;
-            --primary-light: #d6bcfa;
+            --primary: #7c3aed;
+            --primary-dark: #5b21b6;
+            --primary-light: #c7b3ff;
             --bg-light: #ffffff;
             --bg-light-secondary: #f7fafc;
-            --page-bg-light: linear-gradient(180deg, #ffffff 0%, #f8f0ff 100%);
+            --page-bg-light: linear-gradient(180deg, #ffffff 0%, #f6f0ff 100%);
             --page-bg-light-accents:
-                radial-gradient(circle at top left, rgba(159, 122, 234, 0.22), transparent 30%),
-                radial-gradient(circle at bottom right, rgba(214, 188, 250, 0.34), transparent 28%);
+                radial-gradient(circle at top left, rgba(124, 58, 237, 0.14), transparent 28%),
+                radial-gradient(circle at bottom right, rgba(91, 33, 182, 0.14), transparent 30%);
             --text-light: #1a202c;
             --text-light-secondary: #4a5568;
             --bg-dark: #1a202c;
             --bg-dark-secondary: #2d3748;
-            --page-bg-dark: linear-gradient(180deg, #050505 0%, #120916 48%, #221037 100%);
+            --page-bg-dark: linear-gradient(180deg, #05050a 0%, #0b0520 48%, #160a2b 100%);
             --page-bg-dark-accents:
-                radial-gradient(circle at top left, rgba(159, 122, 234, 0.24), transparent 28%),
-                radial-gradient(circle at bottom right, rgba(122, 60, 214, 0.28), transparent 30%);
+                radial-gradient(circle at top left, rgba(124, 58, 237, 0.18), transparent 28%),
+                radial-gradient(circle at bottom right, rgba(91, 33, 182, 0.18), transparent 30%);
             --text-dark: #f7fafc;
             --text-dark-secondary: #cbd5e0;
             --success: #48bb78;
@@ -383,6 +383,44 @@
             display: grid;
             gap: 0.75rem;
             pointer-events: none;
+        }
+
+        /* Techy animated hero */
+        .auth-hero {
+            position: relative;
+            overflow: hidden;
+        }
+
+        .auth-hero::before {
+            content: '';
+            position: absolute;
+            inset: -20% -10% auto -10%;
+            height: 140%;
+            background: radial-gradient(closest-side at 20% 20%, rgba(124,58,237,0.12), transparent 20%), radial-gradient(closest-side at 80% 80%, rgba(91,33,182,0.10), transparent 18%);
+            transform: rotate(8deg) translateZ(0);
+            filter: blur(30px) saturate(120%);
+            pointer-events: none;
+            animation: heroShift 8s linear infinite;
+        }
+
+        @keyframes heroShift {
+            0% { transform: translateX(-4%) rotate(6deg); }
+            50% { transform: translateX(4%) rotate(-6deg); }
+            100% { transform: translateX(-4%) rotate(6deg); }
+        }
+
+        .card {
+            border: 1px solid rgba(124,58,237,0.12);
+            background: linear-gradient(180deg, rgba(255,255,255,0.6), rgba(255,255,255,0.4));
+            box-shadow: 0 10px 30px rgba(79, 42, 185, 0.06);
+            border-radius: 14px;
+        }
+
+        .stat-value {
+            font-size: 2.6rem;
+            font-weight: 800;
+            color: var(--primary-dark);
+            letter-spacing: -0.02em;
         }
 
         .toast {
@@ -1184,6 +1222,7 @@
                 this._playbackStartTimeout = null; // timeout when media doesn't start
                 this._playbackStartTimeoutMs = 10000; // 10s fallback
                 this._devTestMode = false; // enable developer test hooks
+                this.realtimeInterval = null; // interval id for dashboard polling
 
                 // lightweight debug logging
                 this.debugLog = (msg, meta) => {
@@ -1711,6 +1750,8 @@
                 if (this.isSuperAdmin) {
                     this.loadAdmins();
                 }
+                // start realtime dashboard polling
+                try { this.startRealtimePolling(); } catch (e) { /* ignore */ }
                 this.updateSidebarToggleVisibility();
             }
 
@@ -1749,6 +1790,39 @@
                     if (rejectedEl) rejectedEl.textContent = '0';
                     if (playedEl) playedEl.textContent = '0';
                 }
+            }
+
+            startRealtimePolling() {
+                if (this.realtimeInterval) return;
+                // initial refresh
+                try { this.loadDashboard(); } catch (e) { /* ignore */ }
+                this.realtimeInterval = setInterval(() => {
+                    try { this.loadDashboard(); } catch (e) { /* ignore */ }
+                }, 5000);
+            }
+
+            stopRealtimePolling() {
+                if (!this.realtimeInterval) return;
+                clearInterval(this.realtimeInterval);
+                this.realtimeInterval = null;
+            }
+
+            animateValue(el, start, end, duration = 600) {
+                try {
+                    if (!el) return;
+                    start = Number(start || 0);
+                    end = Number(end || 0);
+                    if (start === end) { el.textContent = String(end); return; }
+                    const range = end - start;
+                    const stepTime = Math.max(Math.floor(duration / Math.abs(range)), 16);
+                    let current = start;
+                    const step = end > start ? 1 : -1;
+                    const timer = setInterval(() => {
+                        current += step;
+                        el.textContent = String(current);
+                        if (current === end) clearInterval(timer);
+                    }, stepTime);
+                } catch (e) { /* ignore */ }
             }
 
             async loadAdmins() {
@@ -2423,6 +2497,8 @@
             }
 
             logout() {
+                // stop realtime polling before logging out
+                try { this.stopRealtimePolling(); } catch (e) { /* ignore */ }
                 api.clearToken();
                 this.currentUser = null;
                 this.currentPage = 'dashboard';
