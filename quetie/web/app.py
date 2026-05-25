@@ -654,6 +654,11 @@ async def health_check() -> HealthResponse:
     )
 
 
+@app.head("/health", include_in_schema=False, tags=["health"])
+async def health_check_head() -> Response:
+    return Response(status_code=status.HTTP_200_OK)
+
+
 @app.post("/api/auth/login", response_model=LoginResponse, tags=["auth"])
 async def login(request: LoginRequest) -> LoginResponse:
     success, token, _ = SecurityManager.authenticate_admin(request.username, request.password)
