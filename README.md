@@ -102,6 +102,112 @@ Access the dashboard at: `http://localhost:8000`
 - Username: `admin`
 - Password: `admin123` (change immediately!)
 
+## Production Deployment
+
+Quetie_mbg is packaged to run as a single Render web service with the frontend built into the backend container.
+
+### Required environment variables
+
+```env
+ENVIRONMENT=production
+JWT_SECRET=replace-with-a-long-random-secret
+ADMIN_PASSWORD_HASH=precomputed-bcrypt-hash
+CORS_ALLOWED_ORIGINS=https://your-app.onrender.com
+MAX_QUEUE_SIZE=500
+LOG_LEVEL=INFO
+```
+
+### Render setup
+
+1. Create a new Render Web Service from this repository.
+2. Use `render.yaml` or the Docker deploy option.
+3. Set `JWT_SECRET` and `ADMIN_PASSWORD_HASH` as secret values.
+4. Keep `ENVIRONMENT=production` so secure cookie and header behavior stays enabled.
+5. Point UptimeRobot at `GET /health` for uptime monitoring.
+
+### Docker (local test)
+
+Build and run the production container locally to verify startup and health checks:
+
+```bash
+docker build -t quetie_mbg:local .
+docker run --env-file .env -p 8000:8000 --name quetie_mbg_local quetie_mbg:local
+# then in another terminal
+curl http://localhost:8000/health
+```
+
+If Docker isn't available locally, use `python main.py --mode all` with a virtualenv.
+
+### Automated local verification scripts
+
+Two helper scripts are provided to simplify local Docker verification:
+
+- `scripts/verify_docker.sh` — Linux/macOS (bash)
+- `scripts/verify_docker.ps1` — Windows (PowerShell)
+
+Usage (bash):
+
+```bash
+chmod +x scripts/verify_docker.sh
+./scripts/verify_docker.sh
+```
+
+Usage (PowerShell):
+
+```powershell
+.\scripts\verify_docker.ps1
+# Optionally: .\scripts\verify_docker.ps1 -Cleanup
+```
+
+The scripts perform the following steps:
+
+- Build the Docker image (`quetie_mbg:local`).
+- Remove any previous test container named `quetie_mbg_local`.
+- Start the container with env vars from `.env` (if present).
+- Wait for `/health` to respond (up to 60s).
+- Show the `/health` response and tail container logs for debugging.
+
+If the health check fails, the scripts print recent container logs and exit non-zero.
+
+
+### Quick verification script
+
+Two helper scripts are included to simplify repeated local verification before deploying to Render:
+
+- `scripts/local_verify.sh` — POSIX shell (Linux/macOS)
+- `scripts/local_verify.ps1` — PowerShell (Windows)
+
+Usage (Linux/macOS):
+
+```bash
+bash scripts/local_verify.sh
+```
+
+Usage (Windows PowerShell):
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\local_verify.ps1 -Port 8000
+```
+
+The scripts will:
+
+- build the Docker image
+- remove old test container if present
+- start the container with `--env-file .env` and port mapping
+- wait for `/health` to respond (default 60s)
+- tail the container logs on success
+- exit non-zero with logs if the health check fails
+
+Edit `.env` from `.env.example` to populate runtime secrets before running.
+
+
+### Runtime behavior
+
+- Frontend builds during the Docker image build and is served by FastAPI from `quetie/web/static`.
+- Auth uses JWT login plus a secure session cookie for SSE.
+- Mutating API calls require a CSRF token header.
+- `/health` is a lightweight unauthenticated health endpoint for Render and external monitors.
+
 ## Architecture
 
 ### Directory Structure

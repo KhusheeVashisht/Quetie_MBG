@@ -1,0 +1,11 @@
+{
+  "name": "quetie-autoplay-tests",
+  "version": "0.1.0",
+  "private": true,
+  "devDependencies": {
+    "@playwright/test": "^1.43.0"
+  },
+  "scripts": {
+    "test:autoplay": "npx playwright test tests/autoplay.spec.ts --project=chromium"
+  }
+}

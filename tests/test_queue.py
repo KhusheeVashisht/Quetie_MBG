@@ -3,9 +3,13 @@ Tests for queue management
 """
 
 import pytest
+from datetime import timedelta
 from quetie.queue.manager import queue_manager
+from quetie.queue.manager import QueueManager
 from quetie.db.database import Database
-from quetie.db.models import QueueEntry, QueueEntryStatus
+from quetie.db.models import QueueEntry, QueueEntryStatus, AppSetting
+from quetie.config.settings import settings
+from quetie.utils.time import utc_now_iso, utc_now
 
 
 class TestQueueManager:
@@ -106,6 +110,48 @@ class TestQueueManager:
         if success and entry_id:
             play_success, play_message = queue_manager.mark_as_playing(entry_id)
             assert play_success
+
+    def test_mark_as_playing_replaces_previous_current_entry(self):
+        """Test only one queue entry remains in playing state at a time"""
+        first_success, _, first_id = queue_manager.add_to_queue(
+            url="https://queue-first-example.com/watch",
+            submitter_username="test_user"
+        )
+        second_success, _, second_id = queue_manager.add_to_queue(
+            url="https://queue-second-example.com/watch",
+            submitter_username="test_user"
+        )
+
+        assert first_success and first_id is not None
+        assert second_success and second_id is not None
+
+        first_play_success, _, _ = queue_manager.mark_as_playing(first_id)
+        second_play_success, _, _ = queue_manager.mark_as_playing(second_id)
+
+        assert first_play_success
+        assert second_play_success
+
+        current = queue_manager.get_current_playing()
+        assert current is not None
+        assert current["id"] == second_id
+
+        entries, _ = queue_manager.get_queue(limit=50)
+        first_entry = next((entry for entry in entries if entry["id"] == first_id), None)
+        assert first_entry is not None
+        assert first_entry["status"] == QueueEntryStatus.PENDING.value
+
+    def test_get_current_playing(self):
+        """Test retrieving the current playing queue entry"""
+        success, message, entry_id = queue_manager.add_to_queue(
+            url="https://current-playing-test.com",
+            submitter_username="test_user"
+        )
+
+        if success and entry_id:
+            queue_manager.mark_as_playing(entry_id)
+            current = queue_manager.get_current_playing()
+            assert current is not None
+            assert current["id"] == entry_id
     
     def test_mark_as_completed(self):
         """Test marking entry as completed"""
@@ -134,7 +180,7 @@ class TestQueueManager:
     
     def test_search_queue(self):
         """Test searching queue"""
-        queue_manager.add_to_queue("https://search-test.com", "searchuser")
+        queue_manager.add_to_queue("https://valid-test-domain.com", "searchuser")
         
         results = queue_manager.search_queue("search")
         assert len(results) > 0
@@ -150,3 +196,113 @@ class TestQueueManager:
 
 if __name__ == "__main__":
     pytest.main([__file__])
+
+
+def test_restore_runtime_state_preserves_current_playing_after_restart():
+    Database.initialize("sqlite:///:memory:")
+    manager = QueueManager()
+
+    success, _, entry_id = manager.add_to_queue(
+        url="https://restore-example.com/video.mp4",
+        submitter_username="restore_user",
+    )
+    assert success and entry_id is not None
+
+    play_success, _, _ = manager.mark_as_playing(entry_id)
+    assert play_success
+
+    restored_manager = QueueManager()
+    state = restored_manager.restore_runtime_state()
+
+    assert state["playing_entry_id"] == entry_id
+    current = restored_manager.get_current_playing()
+    assert current is not None
+    assert current["id"] == entry_id
+    assert restored_manager.get_playback_state()["current_entry_id"] == entry_id
+
+
+def test_restore_runtime_state_repairs_multiple_playing_rows():
+    Database.initialize("sqlite:///:memory:")
+    manager = QueueManager()
+
+    success1, _, first_id = manager.add_to_queue(
+        url="https://repair-example.com/one",
+        submitter_username="repair_user",
+    )
+    success2, _, second_id = manager.add_to_queue(
+        url="https://repair-example.com/two",
+        submitter_username="repair_user",
+    )
+    assert success1 and first_id is not None
+    assert success2 and second_id is not None
+
+    with Database.session_context() as session:
+        first = session.query(QueueEntry).filter(QueueEntry.id == first_id).first()
+        second = session.query(QueueEntry).filter(QueueEntry.id == second_id).first()
+        first.status = QueueEntryStatus.PLAYING
+        second.status = QueueEntryStatus.PLAYING
+
+    repaired = manager.restore_runtime_state()
+    assert repaired["playing_entry_id"] in {first_id, second_id}
+
+    with Database.session_context() as session:
+        playing_entries = session.query(QueueEntry).filter(
+            QueueEntry.status == QueueEntryStatus.PLAYING
+        ).all()
+        assert len(playing_entries) == 1
+
+
+def test_restore_runtime_state_removes_invalid_active_entries():
+    Database.initialize("sqlite:///:memory:")
+    manager = QueueManager()
+
+    with Database.session_context() as session:
+        session.add(
+            QueueEntry(
+                url="not-a-valid-url",
+                status=QueueEntryStatus.PLAYING,
+                submitter_username="broken_user",
+                position=0,
+            )
+        )
+
+    repaired = manager.restore_runtime_state()
+    assert repaired["playing_entry_id"] is None
+    assert manager.get_current_playing() is None
+
+
+def test_restore_runtime_state_clears_stale_playing_state():
+    Database.initialize("sqlite:///:memory:")
+    manager = QueueManager()
+
+    success, _, entry_id = manager.add_to_queue(
+        url="https://stale-example.com/video.mp4",
+        submitter_username="stale_user",
+    )
+    assert success and entry_id is not None
+
+    play_success, _, _ = manager.mark_as_playing(entry_id)
+    assert play_success
+
+    with Database.session_context() as session:
+        setting = session.query(AppSetting).filter(AppSetting.key == QueueManager.PLAYBACK_STATE_KEY).first()
+        assert setting is not None
+        stale_started_at = (utc_now() - timedelta(seconds=settings.PLAYING_STALE_AFTER_SECONDS + 5)).isoformat()
+        setting.value = f'''{{
+            "current_entry_id": {entry_id},
+            "current_url": "https://stale-example.com/video.mp4",
+            "status": "playing",
+            "reason": "manual_test",
+            "updated_at": "{utc_now_iso()}",
+            "started_at": "{stale_started_at}"
+        }}'''
+
+    restored = manager.restore_runtime_state()
+    assert restored["playing_entry_id"] is None
+
+    current = manager.get_current_playing()
+    assert current is None
+
+    with Database.session_context() as session:
+        playing_rows = session.query(QueueEntry).filter(QueueEntry.status == QueueEntryStatus.PLAYING).all()
+        assert len(playing_rows) == 0

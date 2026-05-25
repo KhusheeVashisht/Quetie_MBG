@@ -74,6 +74,35 @@ class LinkValidator:
         except Exception as e:
             logger.error(f"Error parsing domain from URL: {e}")
             return None
+
+    @staticmethod
+    def derive_display_title(url: str) -> str:
+        """
+        Derive a short display title from a URL.
+
+        Args:
+            url: URL to analyze
+
+        Returns:
+            Human-friendly title for queue display
+        """
+        try:
+            parsed = urlparse(url)
+            path_parts = [part for part in parsed.path.split('/') if part]
+
+            if path_parts:
+                candidate = path_parts[-1].replace('-', ' ').replace('_', ' ')
+                candidate = re.sub(r'\s+', ' ', candidate).strip()
+                if candidate:
+                    return candidate[:80]
+
+            domain = LinkValidator.extract_domain(url)
+            if domain:
+                return domain
+        except Exception:
+            pass
+
+        return url[:80]
     
     @staticmethod
     def is_discord_link(url: str) -> bool:
@@ -99,8 +128,7 @@ class LinkValidator:
         
         social_patterns = [
             "twitch.tv",
-            "youtube.com",
-            "youtu.be",
+            
             "twitter.com",
             "x.com",
             "instagram.com",
@@ -172,7 +200,7 @@ class LinkValidator:
         # Check basic format
         if not LinkValidator.is_valid_url(url):
             return False, "Invalid URL format"
-        
+
         # Check specific blocked types
         if LinkValidator.is_discord_link(url):
             return False, "Discord links not allowed"

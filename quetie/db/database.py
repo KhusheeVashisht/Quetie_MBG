@@ -3,7 +3,7 @@ Database initialization and management for Quetie_mbg
 Handles SQLAlchemy session management and schema creation
 """
 
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker, Session
 from sqlalchemy.pool import StaticPool
 from contextlib import contextmanager
@@ -60,6 +60,11 @@ class Database:
         # Create all tables
         Base.metadata.create_all(bind=cls._engine)
         logger.info("Database tables created/verified")
+
+    @classmethod
+    def is_initialized(cls) -> bool:
+        """Return True when the session factory is ready."""
+        return cls._session_maker is not None
     
     @classmethod
     def get_session(cls) -> Session:
@@ -113,7 +118,7 @@ class Database:
         """
         try:
             with cls.session_context() as session:
-                session.execute("SELECT 1")
+                session.execute(text("SELECT 1"))
             logger.debug("Database health check passed")
             return True
         except Exception as e:

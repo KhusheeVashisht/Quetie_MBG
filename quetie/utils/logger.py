@@ -5,7 +5,6 @@ Provides structured logging with appropriate levels and formatting
 
 import logging
 import sys
-from pathlib import Path
 from quetie.config.settings import settings
 
 
@@ -34,7 +33,7 @@ def setup_logger(name: str, level: str = None) -> logging.Logger:
     
     # Formatter
     formatter = logging.Formatter(
-        fmt="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+        fmt="%(asctime)s %(levelname)s %(name)s %(message)s",
         datefmt="%Y-%m-%d %H:%M:%S"
     )
     console_handler.setFormatter(formatter)

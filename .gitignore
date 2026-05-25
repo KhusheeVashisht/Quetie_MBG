@@ -12,6 +12,7 @@ env/
 .env.*.local
 *.db
 *.sqlite
+*.sqlite3
 .DS_Store
 .vscode/
 .idea/

@@ -15,6 +15,9 @@ from quetie.web.auth import SecurityManager
 from quetie.web.app import create_app
 from quetie.filtering.filters import filter_engine
 from quetie.utils.logger import setup_logger
+from quetie.utils.diagnostics import record_diagnostic
+from quetie.queue.manager import queue_manager
+from quetie.runtime import runtime_state
 
 logger = setup_logger(__name__)
 
@@ -35,39 +38,58 @@ def shutdown():
     if irc_client and irc_client.running:
         logger.info("Stopping IRC client...")
         irc_client.stop()
+    runtime_state.set_bot_status(enabled=bool(settings.TWITCH_OAUTH_TOKEN), connected=False, error=None)
     
     Database.close()
     logger.info("Shutdown complete")
 
 
-def start_bot():
-    """Start Twitch IRC bot only"""
-    logger.info("Starting Twitch IRC Bot...")
-    
-    # Initialize database
+def bootstrap_application() -> None:
+    """Initialize shared app dependencies and restore persistent runtime state."""
     Database.initialize()
-    
-    # Initialize default admin
     SecurityManager.init_default_admin()
-    
-    # Refresh filter cache
     filter_engine.refresh_filters()
-    
-    # Create IRC client
+    runtime_state.mark_startup_completed()
+    record_diagnostic("app", "bootstrap_completed", mode="shared")
+
+
+def start_bot_runtime() -> bool:
+    """Start the Twitch bot background runtime when credentials are available."""
     global irc_client
+
+    if not settings.TWITCH_OAUTH_TOKEN:
+        logger.warning("TWITCH_OAUTH_TOKEN not configured; bot runtime disabled")
+        runtime_state.set_bot_status(enabled=False, connected=False, error="missing_twitch_oauth_token")
+        record_diagnostic("bot", "disabled", level="WARNING", reason="missing_twitch_oauth_token")
+        return False
+
     irc_client = TwitchIRCClient(
         username=settings.TWITCH_BOT_USERNAME,
         oauth_token=settings.TWITCH_OAUTH_TOKEN,
         target_channel=settings.TWITCH_TARGET_CHANNEL
     )
-    
-    # Register command handlers
     create_command_handlers(irc_client)
-    
-    # Start IRC client
-    irc_client.start()
-    
-    logger.info(f"Bot connected to #{settings.TWITCH_TARGET_CHANNEL}")
+
+    started = irc_client.start()
+    if started:
+        logger.info(f"Bot connected to #{settings.TWITCH_TARGET_CHANNEL}")
+        runtime_state.set_bot_status(enabled=True, connected=True, error=None)
+        record_diagnostic("bot", "started", channel=settings.TWITCH_TARGET_CHANNEL)
+        return True
+
+    logger.error("Bot failed to start; continuing without chat runtime")
+    runtime_state.set_bot_status(enabled=True, connected=False, error="failed_to_start")
+    record_diagnostic("bot", "start_failed", level="ERROR", channel=settings.TWITCH_TARGET_CHANNEL)
+    return False
+
+
+def start_bot():
+    """Start Twitch IRC bot only"""
+    logger.info("Starting Twitch IRC Bot...")
+    bootstrap_application()
+    queue_manager.restore_runtime_state()
+    if not start_bot_runtime():
+        raise RuntimeError("Bot-only mode requested but Twitch bot could not start")
     logger.info("Bot is running (Press Ctrl+C to stop)")
     
     # Keep running
@@ -83,17 +105,8 @@ def start_bot():
 def start_web():
     """Start web dashboard only"""
     logger.info("Starting Web Dashboard...")
-    
-    # Initialize database
-    Database.initialize()
-    
-    # Initialize default admin
-    SecurityManager.init_default_admin()
-    
-    # Refresh filter cache
-    filter_engine.refresh_filters()
-    
-    # Create app
+    bootstrap_application()
+
     global app
     app = create_app()
     
@@ -112,32 +125,9 @@ def start_web():
 def start_all():
     """Start both bot and web dashboard"""
     logger.info("Starting Quetie_mbg (Bot + Web Dashboard)...")
-    
-    # Initialize database
-    Database.initialize()
-    
-    # Initialize default admin
-    SecurityManager.init_default_admin()
-    
-    # Refresh filter cache
-    filter_engine.refresh_filters()
-    
-    # Create and start IRC client in background thread
-    global irc_client
-    irc_client = TwitchIRCClient(
-        username=settings.TWITCH_BOT_USERNAME,
-        oauth_token=settings.TWITCH_OAUTH_TOKEN,
-        target_channel=settings.TWITCH_TARGET_CHANNEL
-    )
-    
-    # Register command handlers
-    create_command_handlers(irc_client)
-    
-    # Start IRC client (runs in background thread)
-    irc_client.start()
-    logger.info(f"Bot connected to #{settings.TWITCH_TARGET_CHANNEL}")
-    
-    # Create and start web app
+    bootstrap_application()
+    start_bot_runtime()
+
     global app
     app = create_app()
     
@@ -202,7 +192,7 @@ def main():
         return 0
     
     # Validate Twitch configuration
-    if (args.mode in ["bot", "all"]) and not settings.TWITCH_OAUTH_TOKEN:
+    if args.mode == "bot" and not settings.TWITCH_OAUTH_TOKEN:
         logger.error("TWITCH_OAUTH_TOKEN is required to run bot mode")
         return 1
     
@@ -216,6 +206,8 @@ def main():
             start_all()
     except Exception as e:
         logger.error(f"Fatal error: {e}", exc_info=True)
+        runtime_state.mark_startup_error(str(e))
+        record_diagnostic("app", "fatal_error", level="ERROR", error=str(e))
         shutdown()
         return 1
     

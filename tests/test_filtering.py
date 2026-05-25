@@ -60,7 +60,6 @@ class TestLinkValidator:
         """Test social media link detection"""
         social_urls = [
             "https://twitch.tv/example",
-            "https://youtube.com/watch",
             "https://twitter.com/user",
             "https://instagram.com/user",
         ]
@@ -86,12 +85,11 @@ class TestLinkValidator:
         is_valid, reason = LinkValidator.validate_url("https://example.com")
         assert is_valid
         assert reason is None
-        
+
         # Discord URL
         is_valid, reason = LinkValidator.validate_url("https://discord.gg/invite")
         assert not is_valid
         assert "Discord" in reason
-        
         # URL with blocked domain
         is_valid, reason = LinkValidator.validate_url(
             "https://example.com",
@@ -148,7 +146,6 @@ class TestFilterEngine:
         
         # Clean up
         engine.remove_blocked_domain("test-blocked.com")
-
 
 if __name__ == "__main__":
     pytest.main([__file__])

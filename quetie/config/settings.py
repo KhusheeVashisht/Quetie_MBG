@@ -35,8 +35,8 @@ class Settings:
     
     # Web Configuration
     WEB_HOST: str = os.getenv("WEB_HOST", "0.0.0.0")
-    WEB_PORT: int = int(os.getenv("WEB_PORT", "8000"))
-    WEB_WORKERS: int = int(os.getenv("WEB_WORKERS", "4"))
+    WEB_PORT: int = int(os.getenv("PORT", os.getenv("WEB_PORT", "8000")))
+    WEB_WORKERS: int = int(os.getenv("WEB_WORKERS", "1"))
     
     # Security
     JWT_SECRET: str = os.getenv("JWT_SECRET", "dev-secret-key-change-in-production")
@@ -55,10 +55,15 @@ class Settings:
     # Queue Configuration
     MAX_QUEUE_SIZE: int = 100
     LINK_VALIDATION_TIMEOUT: int = 5  # seconds
+    PLAYBACK_START_TIMEOUT_SECONDS: int = int(os.getenv("PLAYBACK_START_TIMEOUT_SECONDS", "12"))
+    PLAYING_STALE_AFTER_SECONDS: int = int(os.getenv("PLAYING_STALE_AFTER_SECONDS", "21600"))
     
     # Feature Flags
     ENABLE_HEALTH_CHECK: bool = True
     HEALTH_CHECK_PATH: str = "/health"
+    # Browser for auto-play on server (optional)
+    # Example on Windows: C:\\Program Files\\BraveSoftware\\Brave-Browser\\Application\\brave.exe
+    BROWSER_PATH: str = os.getenv("BROWSER_PATH", "")
     
     def validate(self) -> bool:
         """Validate critical settings"""

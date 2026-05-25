@@ -4,6 +4,7 @@ Processes user commands and routes them to appropriate handlers
 """
 
 import re
+import shlex
 import urllib.parse
 import urllib.request
 from typing import Optional
@@ -150,13 +151,21 @@ class CommandHandlers:
 
         urls = self.URL_PATTERN.findall(args)
         if not urls:
-            # Support multiple free-text song/video queries separated by commas or newlines
-            parts = [p.strip() for p in re.split(r'[,\r\n]+', args) if p.strip()]
+            has_separators = bool(re.search(r"[\r\n;,|]", args))
+            normalized = re.sub(r"[\r\n;,|]+", " ", args).strip()
+            try:
+                parts = shlex.split(normalized)
+            except ValueError:
+                parts = [segment for segment in normalized.split() if segment]
+
             if not parts:
                 self.irc_client.send_message(
-                    f"@{username} No valid URLs found. Use !add <url> or provide a song/video name to search YouTube."
+                    f"@{username} No valid URLs or searchable song names found. Use !add <url> or !add <song1> <song2>."
                 )
                 return
+
+            if len(parts) > 1 and not has_separators and len(parts) != 2:
+                parts = [normalized]
 
             results = []
             for part in parts:
@@ -174,20 +183,24 @@ class CommandHandlers:
             added = sum(1 for _, _, success, _, _ in results if success)
             failed = len(results) - added
             if failed == 0:
-                # If there was only one free-text query, mirror the single-URL reply format
                 if len(results) == 1:
-                    part, resolved_url, success, message, _ = results[0]
+                    _, resolved_url, _, message, _ = results[0]
                     self.irc_client.send_message(f"@{username} {message} (matched: {resolved_url})")
                     return
 
                 positions = []
-                for part, _, success, message, _ in results:
+                for _, _, _, message, _ in results:
                     m = re.search(r"position\s+(\d+)", message, re.IGNORECASE)
                     positions.append(m.group(1) if m else "?")
-                self.irc_client.send_message(f"@{username} Added {added} items to queue (positions: {', '.join(positions)})")
+                self.irc_client.send_message(f"@{username} Queued {added} items at positions: {', '.join(positions)}")
             else:
-                first_fail = next((m for p, r, s, m, _ in results if not s), "Some items failed" )
-                self.irc_client.send_message(f"@{username} Added {added}/{len(results)} items; first failure: {first_fail}")
+                failed_item = next((part for part, _, success, _, _ in results if not success), None)
+                first_fail = next((m for _, _, success, m, _ in results if not success), "Some items failed")
+                if failed_item:
+                    first_fail = f"{failed_item}: {first_fail}"
+                self.irc_client.send_message(
+                    f"@{username} Queued {added}/{len(results)} items; {first_fail} - not added"
+                )
             return
 
         if len(urls) == 1:
@@ -238,13 +251,16 @@ class CommandHandlers:
             positions_preview = ", ".join(added_positions[:10])
             suffix = "" if len(added_positions) <= 10 else ", ..."
             self.irc_client.send_message(
-                f"@{username} Added {added} links to queue (positions: {positions_preview}{suffix})"
+                f"@{username} Queued {added} links at positions: {positions_preview}{suffix}"
             )
             return
 
+        failed_item = next((url for url, success, _, _ in results if not success), None)
         failure_hint = failed_messages[0] if failed_messages else "Some links could not be queued"
+        if failed_item:
+            failure_hint = f"{failed_item}: {failure_hint}"
         self.irc_client.send_message(
-            f"@{username} Added {added}/{len(results)} links (positions: {', '.join(added_positions[:10])}); first failure: {failure_hint}"
+            f"@{username} Queued {added}/{len(results)} links (positions: {', '.join(added_positions[:10])}); {failure_hint} - not added"
         )
     
     def handle_help(self, username: str, args: str) -> None:

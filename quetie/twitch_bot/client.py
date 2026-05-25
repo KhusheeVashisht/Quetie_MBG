@@ -4,12 +4,11 @@ Handles IRC connection, message parsing, and command routing
 """
 
 import socket
-import re
 import threading
 import time
 from typing import Callable, Dict, Optional
-from quetie.config.settings import settings
 from quetie.utils.logger import setup_logger
+from quetie.utils.diagnostics import record_diagnostic
 
 logger = setup_logger(__name__)
 
@@ -143,8 +142,13 @@ class TwitchIRCClient:
         """
         try:
             logger.info(f"Connecting to {self.host}:{self.port}...")
-            
+            if self.socket:
+                try:
+                    self.socket.close()
+                except Exception:
+                    pass
             self.socket = socket.socket()
+            self.socket.settimeout(30)
             self.socket.connect((self.host, self.port))
             
             # Send login credentials
@@ -163,11 +167,13 @@ class TwitchIRCClient:
             self.reconnect_delay = 5
             
             logger.info(f"Connected to Twitch IRC - Channel: #{self.target_channel}")
+            record_diagnostic("bot", "connected", channel=self.target_channel)
             return True
         
         except Exception as e:
             logger.error(f"Connection failed: {e}")
             self.connected = False
+            record_diagnostic("bot", "connect_failed", level="ERROR", error=str(e))
             return False
     
     def _send_raw(self, message: str) -> None:
@@ -229,10 +235,11 @@ class TwitchIRCClient:
         try:
             while self.running and self.connected:
                 try:
-                    data = self.socket.recv(4096).decode()
+                    data = self.socket.recv(4096).decode(errors="ignore")
                     if not data:
                         logger.warning("No data received, disconnecting...")
                         self.connected = False
+                        record_diagnostic("bot", "socket_closed")
                         break
                     
                     for line in data.split("\r\n"):
@@ -244,6 +251,7 @@ class TwitchIRCClient:
                 except Exception as e:
                     logger.error(f"Error reading message: {e}")
                     self.connected = False
+                    record_diagnostic("bot", "read_failed", level="ERROR", error=str(e))
                     break
         
         except Exception as e:
@@ -259,11 +267,13 @@ class TwitchIRCClient:
                 
                 if self.reconnect_attempts > self.max_reconnect_attempts:
                     logger.error("Max reconnection attempts exceeded")
+                    record_diagnostic("bot", "reconnect_exhausted", level="ERROR")
                     self.running = False
                     break
                 
                 logger.info(f"Reconnection attempt {self.reconnect_attempts} in {self.reconnect_delay}s...")
-                time.sleep(self.reconnect_delay)
+                if self._stop_event.wait(self.reconnect_delay):
+                    return
                 
                 if self.connect():
                     break
@@ -277,11 +287,11 @@ class TwitchIRCClient:
             except Exception as e:
                 logger.error(f"Error during reconnection: {e}")
     
-    def start(self) -> None:
+    def start(self) -> bool:
         """Start the IRC client in a background thread"""
         if self.running:
             logger.warning("Client already running")
-            return
+            return True
         
         self.running = True
         self._stop_event.clear()
@@ -289,12 +299,13 @@ class TwitchIRCClient:
         # Initial connection
         if not self.connect():
             self.running = False
-            return
+            return False
         
         # Start message reading thread
         self._thread = threading.Thread(target=self._run, daemon=True)
         self._thread.start()
         logger.info("IRC client started")
+        return True
     
     def _run(self) -> None:
         """Main run loop with reconnection handling"""
@@ -319,6 +330,10 @@ class TwitchIRCClient:
         self._stop_event.set()
         
         if self.socket:
+            try:
+                self.socket.shutdown(socket.SHUT_RDWR)
+            except Exception:
+                pass
             try:
                 self.socket.close()
             except Exception as e:

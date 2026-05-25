@@ -7,6 +7,7 @@ import re
 from typing import List, Dict, Tuple, Optional
 from quetie.db.database import Database
 from quetie.db.models import BlockedDomain, BlockedKeyword
+from quetie.filtering.validators import LinkValidator
 from quetie.utils.logger import setup_logger
 
 logger = setup_logger(__name__)
@@ -14,6 +15,40 @@ logger = setup_logger(__name__)
 
 class FilterEngine:
     """Central filtering engine for link validation and blocking"""
+
+    # Built-in safety rules that apply even when the database is empty.
+    BUILTIN_BLOCKED_DOMAINS = [
+        "discord.gg",
+        "discord.com",
+        "discordapp.com",
+        "instagram.com",
+        "facebook.com",
+        "fb.com",
+        "fb.gg",
+        "twitter.com",
+        "x.com",
+        "tiktok.com",
+        "reddit.com",
+        "threads.net",
+        "linkedin.com",
+        "snapchat.com",
+        "pinterest.com",
+        "telegram.me",
+        "t.me",
+        "vk.com",
+        "t.co",
+    ]
+
+    BUILTIN_BLOCKED_KEYWORDS = [
+        "instagram",
+        "discord",
+        "facebook",
+        "twitter",
+        "tiktok",
+        "reddit",
+        "threads",
+        "linkedin",
+    ]
     
     def __init__(self):
         """Initialize filter engine with default rules"""
@@ -73,10 +108,11 @@ class FilterEngine:
             True if successfully added, False otherwise
         """
         try:
+            normalized_domain = domain.strip().lower()
             with Database.session_context() as session:
                 # Check if already exists
                 existing = session.query(BlockedDomain).filter(
-                    BlockedDomain.domain == domain.lower()
+                    BlockedDomain.domain == normalized_domain
                 ).first()
                 
                 if existing:
@@ -84,7 +120,7 @@ class FilterEngine:
                     return False
                 
                 blocked_domain = BlockedDomain(
-                    domain=domain.lower(),
+                    domain=normalized_domain,
                     reason=reason,
                     created_by=admin_username
                 )
@@ -108,9 +144,10 @@ class FilterEngine:
             True if successfully removed, False otherwise
         """
         try:
+            normalized_domain = domain.strip().lower()
             with Database.session_context() as session:
                 blocked_domain = session.query(BlockedDomain).filter(
-                    BlockedDomain.domain == domain.lower()
+                    BlockedDomain.domain == normalized_domain
                 ).first()
                 
                 if not blocked_domain:
@@ -146,10 +183,11 @@ class FilterEngine:
             True if successfully added, False otherwise
         """
         try:
+            normalized_keyword = keyword.strip().lower()
             with Database.session_context() as session:
                 # Check if already exists
                 existing = session.query(BlockedKeyword).filter(
-                    BlockedKeyword.keyword == keyword
+                    BlockedKeyword.keyword == normalized_keyword
                 ).first()
                 
                 if existing:
@@ -157,7 +195,7 @@ class FilterEngine:
                     return False
                 
                 blocked_keyword = BlockedKeyword(
-                    keyword=keyword,
+                    keyword=normalized_keyword,
                     reason=reason,
                     is_regex=is_regex,
                     created_by=admin_username
@@ -183,9 +221,32 @@ class FilterEngine:
         """
         if not self._cache_valid:
             self.refresh_filters()
-        
+
         url_lower = url.lower()
-        
+
+        # Built-in block rules for common social and sharing services.
+        domain = LinkValidator.extract_domain(url_lower) or ""
+        if domain:
+            for blocked_domain in self.BUILTIN_BLOCKED_DOMAINS:
+                if blocked_domain in domain:
+                    return True, f"Blocked social domain: {blocked_domain}"
+
+        for keyword in self.BUILTIN_BLOCKED_KEYWORDS:
+            if keyword in url_lower:
+                return True, f"Blocked social keyword: {keyword}"
+
+        if LinkValidator.is_discord_link(url_lower):
+            return True, "Discord links not allowed"
+
+        if LinkValidator.is_social_media_link(url_lower):
+            return True, "Social media links not allowed"
+
+        if LinkValidator.is_nightbot_link(url_lower):
+            return True, "Bot service links not allowed"
+
+        if LinkValidator.is_short_url(url_lower):
+            return True, "Shortened links not allowed"
+
         # Check against blocked domains
         for domain in self._blocked_domains_cache:
             if domain.lower() in url_lower:
@@ -218,6 +279,36 @@ class FilterEngine:
         except Exception as e:
             logger.error(f"Error getting blocked keywords: {e}")
             return []
+
+    def remove_blocked_keyword(self, keyword: str) -> bool:
+        """
+        Remove a keyword from the blocked list
+
+        Args:
+            keyword: Keyword to remove
+
+        Returns:
+            True if removed, False otherwise
+        """
+        try:
+            normalized_keyword = keyword.strip().lower()
+            with Database.session_context() as session:
+                blocked_keyword = session.query(BlockedKeyword).filter(
+                    BlockedKeyword.keyword == normalized_keyword
+                ).first()
+
+                if not blocked_keyword:
+                    logger.warning(f"Keyword not found in blocked list: {keyword}")
+                    return False
+
+                session.delete(blocked_keyword)
+                session.commit()
+                logger.info(f"Keyword unblocked: {keyword}")
+                self._cache_valid = False
+                return True
+        except Exception as e:
+            logger.error(f"Error removing blocked keyword: {e}")
+            return False
 
 
 # Global filter engine instance
