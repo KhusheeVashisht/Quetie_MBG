@@ -298,6 +298,13 @@ async def set_security_headers(request: Request, call_next):
     return response
 
 
+@app.middleware("http")
+async def head_health_short_circuit(request: Request, call_next):
+    if request.method == "HEAD" and request.url.path == "/health":
+        return Response(status_code=status.HTTP_200_OK)
+    return await call_next(request)
+
+
 def _serialize_setting_value(value) -> str:
     return json.dumps(value)
 
