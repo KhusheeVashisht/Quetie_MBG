@@ -13,6 +13,20 @@ services:
         sync: false
       - key: ADMIN_PASSWORD_HASH
         sync: false
+      - key: TWITCH_BOT_USERNAME
+        sync: false
+      - key: TWITCH_TARGET_CHANNEL
+        sync: false
+      - key: TWITCH_OAUTH_TOKEN
+        sync: false
+      - key: TWITCH_ACCESS_TOKEN
+        sync: false
+      - key: TWITCH_REFRESH_TOKEN
+        sync: false
+      - key: TWITCH_CLIENT_ID
+        sync: false
+      - key: TWITCH_CLIENT_SECRET
+        sync: false
       - key: CORS_ALLOWED_ORIGINS
         value: https://your-render-app.onrender.com
       - key: MAX_QUEUE_SIZE
