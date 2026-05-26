@@ -59,13 +59,26 @@ class TestLinkValidator:
     def test_social_media_link_detection(self):
         """Test social media link detection"""
         social_urls = [
-            "https://twitch.tv/example",
             "https://twitter.com/user",
             "https://instagram.com/user",
         ]
         
         for url in social_urls:
             assert LinkValidator.is_social_media_link(url), f"Failed for: {url}"
+
+    def test_twitch_links_are_not_blocked_as_social(self):
+        """Twitch URLs should be queueable links, not social-media rejections."""
+        twitch_urls = [
+            "https://twitch.tv/example",
+            "https://clips.twitch.tv/example",
+        ]
+
+        for url in twitch_urls:
+            assert not LinkValidator.is_social_media_link(url), f"Should allow: {url}"
+
+        is_valid, reason = LinkValidator.validate_url("https://twitch.tv/example")
+        assert is_valid
+        assert reason is None
     
     def test_domain_extraction(self):
         """Test domain extraction from URLs"""

@@ -127,16 +127,12 @@ class LinkValidator:
             return False
         
         social_patterns = [
-            "twitch.tv",
-            
             "twitter.com",
             "x.com",
             "instagram.com",
             "tiktok.com",
             "facebook.com",
             "reddit.com",
-            "twitch.stream",
-            "clips.twitch.tv",
         ]
         
         return any(pattern in domain for pattern in social_patterns)
