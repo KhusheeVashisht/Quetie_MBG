@@ -110,6 +110,8 @@ def _bot_disconnect_reason() -> str:
         return "Bot has not been started in this web process yet."
     if last_error == "failed_to_start":
         return "Twitch IRC connection failed. Check the bot username, token, and network access."
+    if last_error == "authentication_failed":
+        return "Twitch IRC authentication failed. Re-check the OAuth token and make sure it belongs to the bot account."
     if last_error == "missing_twitch_oauth_token":
         return "Twitch OAuth token is missing from the server configuration."
     if last_error:
@@ -293,6 +295,12 @@ async def set_security_headers(request: Request, call_next):
         response.headers['Referrer-Policy'] = 'same-origin'
         # Content-Security-Policy: keep reasonably strict but allow same-origin resources
         response.headers.setdefault('Content-Security-Policy', "default-src 'self'; img-src 'self' data:; script-src 'self'; style-src 'self' 'unsafe-inline'; frame-ancestors 'none';")
+        # Expose bot connection status to lightweight uptime monitors that only use HEAD
+        try:
+            bot_connected = bool(runtime_state.snapshot().get('bot_connected'))
+            response.headers['X-Bot-Connected'] = 'true' if bot_connected else 'false'
+        except Exception:
+            response.headers['X-Bot-Connected'] = 'false'
     except Exception:
         pass
     return response
@@ -301,7 +309,23 @@ async def set_security_headers(request: Request, call_next):
 @app.middleware("http")
 async def head_health_short_circuit(request: Request, call_next):
     if request.method == "HEAD" and request.url.path == "/health":
-        return Response(status_code=status.HTTP_200_OK)
+        # Return 200 only when both the database and bot are healthy; otherwise return 503
+        try:
+            database_ok = Database.health_check()
+        except Exception:
+            database_ok = False
+        try:
+            runtime = runtime_state.snapshot()
+            bot_connected = bool(runtime.get("bot_connected"))
+        except Exception:
+            bot_connected = False
+        status_code = status.HTTP_200_OK if (database_ok and bot_connected) else status.HTTP_503_SERVICE_UNAVAILABLE
+        resp = Response(status_code=status_code)
+        try:
+            resp.headers['X-Bot-Connected'] = 'true' if bot_connected else 'false'
+        except Exception:
+            pass
+        return resp
     return await call_next(request)
 
 
@@ -663,7 +687,22 @@ async def health_check() -> HealthResponse:
 
 @app.head("/health", include_in_schema=False, tags=["health"])
 async def health_check_head() -> Response:
-    return Response(status_code=status.HTTP_200_OK)
+    try:
+        database_ok = Database.health_check()
+    except Exception:
+        database_ok = False
+    try:
+        runtime = runtime_state.snapshot()
+        bot_connected = bool(runtime.get("bot_connected"))
+    except Exception:
+        bot_connected = False
+    status_code = status.HTTP_200_OK if (database_ok and bot_connected) else status.HTTP_503_SERVICE_UNAVAILABLE
+    response = Response(status_code=status_code)
+    try:
+        response.headers['X-Bot-Connected'] = 'true' if bot_connected else 'false'
+    except Exception:
+        pass
+    return response
 
 
 @app.post("/api/auth/login", response_model=LoginResponse, tags=["auth"])
